@@ -18,7 +18,6 @@ CONTROL_FLAGS = [
     'calibrate_magnet',
     'disable_magnet',
     'sbs_mode', 
-    'refresh_device_license', 
     'enable_breezy_desktop_smooth_follow',
     'toggle_breezy_desktop_smooth_follow',
     'breezy_desktop_display_distance',
@@ -29,8 +28,6 @@ CONTROL_FLAGS = [
 SBS_MODE_VALUES = ['unset', 'enable', 'disable']
 BASE_EXTERNAL_MODES = ['none']
 VR_LITE_OUTPUT_MODES = ['mouse', 'joystick']
-
-TOKENS_ENDPOINT="https://eu.driver-backend.xronlinux.com/tokens/v1"
 
 def parse_boolean(value, default):
     if not value:
@@ -114,7 +111,6 @@ STATE_ENTRIES = {
     'firmware_update_recommended': [parse_boolean, False],
     'breezy_desktop_smooth_follow_enabled': [parse_boolean, False],
     'is_gamescope_reshade_ipc_connected': [parse_boolean, False],
-    'device_license': [parse_json_string, None],
 }
 
 class Logger:
@@ -289,17 +285,6 @@ class XRDriverIPC:
             'driver_running': state['heartbeat'] != 0 and (time.time() - state['heartbeat']) < 5
         }
 
-        license_json = state.get('device_license')
-        if license_json is not None:
-            license_view = {}
-            license_view['tiers'] = self._license_tiers_view(license_json)
-            license_view['features'] = self._license_features_view(license_json)
-            license_view['hardware_id'] = license_json['hardwareId']
-            license_view['confirmed_token'] = license_json.get('confirmedToken') == True
-            license_view['action_needed'] = self._license_action_needed_details(license_view)
-            license_view['enabled_features'] = self._license_enabled_features(license_view)
-            ui_view['license'] = license_view
-
         return ui_view
 
     def retrieve_driver_state(self):
@@ -332,139 +317,7 @@ class XRDriverIPC:
             return {
                 'heartbeat': state['heartbeat'],
                 'hardware_id': state['hardware_id'],
-                'device_license': state['device_license'],
                 'ui_view': state['ui_view']
             }
         
-
         return state
-
-    def _license_tiers_view(self, license):
-        tiers = {}
-        for key, value in license['tiers'].items():
-            is_active = value.get('active') == True
-            active_period = value.get('activePeriodType') if is_active else None
-            funds_needed = value.get('fundsNeededByPeriod')
-            tiers[key] = {
-                'active_period': active_period,
-                'funds_needed_by_period': funds_needed
-            }
-
-            end_date = value.get('endDate')
-            if is_active and end_date is not None:
-                active_period_funds_needed = funds_needed.get(active_period)
-                if active_period_funds_needed is not None and active_period_funds_needed != 0:
-                    time_remaining = self._seconds_remaining(end_date)
-                    if (time_remaining > 0):
-                        tiers[key]['funds_needed_in_seconds'] = time_remaining
-                    else:
-                        tiers[key]['active_period'] = None
-
-        return tiers
-
-    def _license_features_view(self, license):
-        features = {}
-        for key, value in license['features'].items():
-            is_enabled = value['status'] != 'off'
-            features[key] = {
-                'is_enabled': is_enabled,
-                'is_trial': value['status'] == 'trial'
-            }
-
-            end_date = value.get('endDate')
-            if is_enabled and end_date is not None:
-                time_remaining = self._seconds_remaining(end_date)
-                if (time_remaining > 0):
-                    features[key]['funds_needed_in_seconds'] = time_remaining
-                else:
-                    features[key]['is_enabled'] = False
-
-        return features
-    
-    def _license_enabled_features(self, license_view):
-        return [key for key, value in license_view['features'].items() if value.get('is_enabled')]
-
-    # returns the earliest of the funds_needed_in_seconds values from the tiers and features
-    def _license_action_needed_details(self, license_view):
-        min_funds_needed_date = None
-        min_funds_needed = None
-        for tier in license_view['tiers'].values():
-            if 'funds_needed_in_seconds' in tier:
-                if min_funds_needed_date is None or tier['funds_needed_in_seconds'] < min_funds_needed_date:
-                    min_funds_needed_date = tier['funds_needed_in_seconds']
-                    active_period_funds_needed = tier['funds_needed_by_period'].get(tier['active_period'])
-                    if active_period_funds_needed is not None and active_period_funds_needed != 0 and \
-                        (min_funds_needed is None or active_period_funds_needed < min_funds_needed):
-                        min_funds_needed = active_period_funds_needed
-
-        for feature in license_view['features'].values():
-            if 'funds_needed_in_seconds' in feature:
-                if min_funds_needed_date is None or feature['funds_needed_in_seconds'] < min_funds_needed_date:
-                    min_funds_needed_date = feature['funds_needed_in_seconds']
-
-        return {
-            'seconds': min_funds_needed_date,
-            'funds_needed_usd': min_funds_needed
-        } if min_funds_needed_date is not None else None
-
-    def _seconds_remaining(self, date_seconds):
-        if not date_seconds:
-            return None
-
-        return date_seconds - time.time()
-
-
-    def request_token(self, email):
-        self.logger.info(f"Requesting a new token for {email}")
-
-        state = self.retrieve_driver_state()
-        if state['hardware_id'] is not None:
-            requestbody = json.dumps({"hardwareId": state['hardware_id'], "email": email})
-
-            try:
-                req = urllib.request.Request(TOKENS_ENDPOINT, method="POST", headers={"Content-Type": "application/json"}, data=requestbody.encode())
-                response = urllib.request.urlopen(req, context=self.request_context)
-                if response.status not in [http.client.OK, http.client.BAD_REQUEST]:
-                    raise Exception(f"Received status code {response.status}")
-                
-                message = json.loads(response.read().decode()).get("message", "")
-                if message:
-                    success = message == "Token request sent"
-                    if not success: self.logger.error(f"Received error from driver backend: {message}")
-                    return success
-                else:
-                    self.logger.error("No message found in the response")
-            except Exception as e:
-                self.logger.error(f"Error: {e}")
-        else:
-            self.logger.error('hardware_id not found in driver state')
-
-        return False
-
-    def verify_token(self, token):
-        self.logger.info(f"Verifying token {token}")
-
-        state = self.retrieve_driver_state()
-        if state['hardware_id'] is not None:
-            requestbody = json.dumps({"hardwareId": state['hardware_id'], "token": token})
-
-            try:
-                req = urllib.request.Request(TOKENS_ENDPOINT, method="PUT", headers={"Content-Type": "application/json"}, data=requestbody.encode())
-                response = urllib.request.urlopen(req, context=self.request_context)
-                if response.status not in [http.client.OK, http.client.BAD_REQUEST]:
-                    raise Exception(f"Received status code {response.status}")
-                
-                message = json.loads(response.read().decode()).get("message", "")
-                if message:
-                    success = message == "Token verified"
-                    if not success: self.logger.error(f"Received error from driver backend: {message}")
-                    return success
-                else:
-                    self.logger.error("No message found in the response")
-            except Exception as e:
-                self.logger.error(f"Error: {e}")
-        else:
-            self.logger.error('hardware_id not found in driver state')
-
-        return False
-

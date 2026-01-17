@@ -1,2 +1,2 @@
 # PyXRLinuxDriverIPC
-Common logic for apps interacting with wheaney/XRLinuxDriver
+Common logic for apps interacting with rebroad/XRLinuxDriver
