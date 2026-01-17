@@ -13,11 +13,11 @@ CONTROL_FLAGS_FILE_PATH = '/dev/shm/xr_driver_control'
 DRIVER_STATE_FILE_PATH = '/dev/shm/xr_driver_state'
 
 CONTROL_FLAGS = [
-    'recenter_screen', 
-    'recalibrate', 
+    'recenter_screen',
+    'recalibrate',
     'calibrate_magnet',
     'disable_magnet',
-    'sbs_mode', 
+    'sbs_mode',
     'enable_breezy_desktop_smooth_follow',
     'toggle_breezy_desktop_smooth_follow',
     'breezy_desktop_display_distance',
@@ -289,7 +289,7 @@ class XRDriverIPC:
 
     def retrieve_driver_state(self):
         state = {}
-        
+
         for key, value in STATE_ENTRIES.items():
             state[key] = value[CONFIG_DEFAULT_VALUE_INDEX]
 
@@ -319,5 +319,5 @@ class XRDriverIPC:
                 'hardware_id': state['hardware_id'],
                 'ui_view': state['ui_view']
             }
-        
+
         return state
